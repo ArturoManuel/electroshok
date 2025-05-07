@@ -1,4 +1,4 @@
-# Nombre del Proyecto
+# Electroshok
 
 Este proyecto está desarrollado en **JavaScript** con entorno de ejecución **Node.js**. A continuación, se detallan los pasos necesarios para instalar las dependencias y ejecutar el proyecto localmente.
 
