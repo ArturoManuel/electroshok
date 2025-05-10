@@ -1,50 +1,39 @@
 import { listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria } from "../services/categoriaService.js";
 
-function obtenerCategorias(req, res) {
-    listarCategorias()
-        .then((categorias) => {
-            res.json(categorias);
-        })
-        .catch((error) => {
-            res.status(500).json({ error: 'Error al obtener las categorías', detalles: error });
-        });
-}
+export const obtenerCategorias = async (req, res) => {
+    try {
+        const categorias = await listarCategorias();
+        res.json(categorias);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al obtener las categorías', detalles: error });
+    }
+};
 
-function agregarCategoria(req, res) {
-    const data = req.body;
+export const agregarCategoria = async (req, res) => {
+    try {
+        const resultado = await crearCategoria(req.body);
+        res.status(201).json(resultado);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al crear la categoría', detalles: error });
+    }
+};
 
-    crearCategoria(data)
-        .then((resultado) => {
-            res.status(201).json(resultado);
-        })
-        .catch((error) => {
-            res.status(500).json({ error: 'Error al crear la categoría', detalles: error });
-        });
-}
+export const modificarCategoria = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const resultado = await actualizarCategoria(id, req.body);
+        res.json(resultado);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al actualizar la categoría', detalles: error });
+    }
+};
 
-function modificarCategoria(req, res) {
-    const id = req.params.id;
-    const data = req.body;
-
-    actualizarCategoria(id, data)
-        .then((resultado) => {
-            res.json(resultado);
-        })
-        .catch((error) => {
-            res.status(500).json({ error: 'Error al actualizar la categoría', detalles: error });
-        });
-}
-
-function borrarCategoria(req, res) {
-    const id = req.params.id;
-
-    eliminarCategoria(id)
-        .then((resultado) => {
-            res.json(resultado);
-        })
-        .catch((error) => {
-            res.status(500).json({ error: 'Error al eliminar la categoría', detalles: error });
-        });
-}
-
-export { obtenerCategorias, agregarCategoria, modificarCategoria, borrarCategoria };
+export const borrarCategoria = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const resultado = await eliminarCategoria(id);
+        res.json(resultado);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al eliminar la categoría', detalles: error });
+    }
+};

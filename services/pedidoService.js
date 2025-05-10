@@ -1,157 +1,158 @@
-import pool from "../config/db.js";
-import { cancelarCarritoUsuario } from "./carritoService.js";
+import { Pedido, DetallePedido, CarritoItem, Producto, Usuario } from '../models/index.js';
+import { cancelarCarritoUsuario } from './carritoService.js';
+import sequelize from '../config/database.js';
 
-function crearPedido(id_usuario) {
-    return new Promise((resolve, reject) => {
+export const crearPedido = async (id_usuario) => {
+    const t = await sequelize.transaction();
 
-        const sqlCarrito = `
-            SELECT ci.id_producto, ci.cantidad, p.precio
-            FROM CarritoItem ci
-            INNER JOIN Producto p ON ci.id_producto = p.id_producto
-            WHERE ci.id_usuario = ?
-        `;
-
-        pool.query(sqlCarrito, [id_usuario], (error, carrito) => {
-            if (error) return reject(error);
-
-            if (carrito.length === 0) {
-                return reject({ mensaje: "No se puede crear el pedido: el carrito está vacío." });
-            }
-
-            const total = carrito.reduce((acc, item) => acc + (item.precio * item.cantidad), 0);
-
-            const sqlPedido = `
-                INSERT INTO Pedido (id_usuario, total, estado)
-                VALUES (?, ?, 'pendiente')
-            `;
-            const valuesPedido = [id_usuario, total];
-
-            pool.query(sqlPedido, valuesPedido, (error2, resultPedido) => {
-                if (error2) return reject(error2);
-
-                const id_pedido = resultPedido.insertId;
-
-                const detalles = carrito.map(item => [
-                    id_pedido,
-                    item.id_producto,
-                    item.cantidad,
-                    item.precio
-                ]);
-
-                const sqlDetalles = `
-                    INSERT INTO DetallePedido (id_pedido, id_producto, cantidad, precio_unitario)
-                    VALUES ?
-                `;
-
-                pool.query(sqlDetalles, [detalles], (error3) => {
-                    if (error3) return reject(error3);
-
-                    cancelarCarritoUsuario(id_usuario)
-                        .then(() => {
-                            resolve({ mensaje: "Pedido creado exitosamente", id_pedido: id_pedido });
-                        })
-                        .catch((error4) => reject(error4));
-                });
-            });
+    try {
+        // Obtener items del carrito
+        const carrito = await CarritoItem.findAll({
+            where: { id_usuario },
+            include: [{
+                model: Producto,
+                attributes: ['precio']
+            }],
+            transaction: t
         });
-    });
-}
 
-function listarPedidos(id_usuario) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT id_pedido, fecha_pedido, total, estado
-            FROM Pedido
-            WHERE id_usuario = ?
-            ORDER BY fecha_pedido DESC
-        `;
-        pool.query(sql, [id_usuario], (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
-            }
-        });
-    });
-}
+        if (carrito.length === 0) {
+            throw { mensaje: "No se puede crear el pedido: el carrito está vacío." };
+        }
 
-function listarDetallePedido(id_pedido) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT p.nombre, dp.cantidad, dp.precio_unitario, (dp.cantidad * dp.precio_unitario) AS subtotal
-            FROM DetallePedido dp
-            INNER JOIN Producto p ON dp.id_producto = p.id_producto
-            WHERE dp.id_pedido = ?
-        `;
-        pool.query(sql, [id_pedido], (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
-            }
-        });
-    });
-}
+        // Calcular total
+        const total = carrito.reduce((acc, item) => 
+            acc + (item.Producto.precio * item.cantidad), 0);
 
-function cambiarEstadoPedido(id_pedido, nuevoEstado) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            UPDATE Pedido
-            SET estado = ?
-            WHERE id_pedido = ?
-        `;
-        pool.query(sql, [nuevoEstado, id_pedido], (error) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: "Estado del pedido actualizado exitosamente" });
-            }
-        });
-    });
-}
+        // Crear pedido
+        const nuevoPedido = await Pedido.create({
+            id_usuario,
+            total,
+            estado: 'pendiente'
+        }, { transaction: t });
 
-function listarTodosLosPedidos() {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT id_pedido, id_usuario, fecha_pedido, total, estado
-            FROM Pedido
-            ORDER BY fecha_pedido DESC
-        `;
-        pool.query(sql, (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
-            }
-        });
-    });
-}
+        // Crear detalles del pedido
+        await DetallePedido.bulkCreate(
+            carrito.map(item => ({
+                id_pedido: nuevoPedido.id_pedido,
+                id_producto: item.id_producto,
+                cantidad: item.cantidad,
+                precio_unitario: item.Producto.precio
+            })),
+            { transaction: t }
+        );
 
-function buscarPedidoPorId(id_pedido) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT id_pedido, id_usuario, fecha_pedido, total, estado
-            FROM Pedido
-            WHERE id_pedido = ?
-        `;
-        pool.query(sql, [id_pedido], (error, results) => {
-            if (error) {
-                reject(error);
-            } else if (results.length === 0) {
-                reject({ mensaje: "Pedido no encontrado" });
-            } else {
-                resolve(results[0]);
-            }
-        });
-    });
-}
+        // Limpiar carrito
+        await cancelarCarritoUsuario(id_usuario);
 
-export {
-    crearPedido,
-    listarPedidos,
-    listarDetallePedido,
-    cambiarEstadoPedido,
-    listarTodosLosPedidos,
-    buscarPedidoPorId
+        await t.commit();
+        return { mensaje: "Pedido creado exitosamente", id_pedido: nuevoPedido.id_pedido };
+
+    } catch (error) {
+        await t.rollback();
+        throw error;
+    }
 };
 
+export const listarPedidos = async (id_usuario) => {
+    try {
+        const pedidos = await Pedido.findAll({
+            where: { id_usuario },
+            attributes: ['id_pedido', 'fecha_pedido', 'total', 'estado'],
+            order: [['fecha_pedido', 'DESC']]
+        });
+        return pedidos;
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const listarDetallePedido = async (id_pedido) => {
+    try {
+        const detalles = await DetallePedido.findAll({
+            where: { id_pedido },
+            include: [{
+                model: Producto,
+                attributes: ['nombre']
+            }],
+            attributes: [
+                'id_detalle',
+                'cantidad',
+                'precio_unitario',
+                [sequelize.literal('cantidad * precio_unitario'), 'subtotal']
+            ]
+        });
+
+        return detalles.map(detalle => ({
+            id_detalle: detalle.id_detalle,
+            nombre: detalle.Producto.nombre,
+            cantidad: detalle.cantidad,
+            precio_unitario: detalle.precio_unitario,
+            subtotal: detalle.getDataValue('subtotal')
+        }));
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const cambiarEstadoPedido = async (id_pedido, nuevoEstado) => {
+    try {
+        const [numRows] = await Pedido.update({
+            estado: nuevoEstado
+        }, {
+            where: { id_pedido }
+        });
+
+        if (numRows === 0) {
+            throw { mensaje: 'Pedido no encontrado' };
+        }
+
+        return { mensaje: 'Estado del pedido actualizado exitosamente' };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const listarTodosLosPedidos = async () => {
+    try {
+        const pedidos = await Pedido.findAll({
+            include: [{
+                model: Usuario,
+                attributes: ['nombre']
+            }],
+            attributes: ['id_pedido', 'fecha_pedido', 'total', 'estado'],
+            order: [['fecha_pedido', 'DESC']]
+        });
+
+        return pedidos.map(pedido => ({
+            ...pedido.toJSON(),
+            nombre_usuario: pedido.Usuario.nombre
+        }));
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const buscarPedidoPorId = async (id_pedido) => {
+    try {
+        const pedido = await Pedido.findOne({
+            where: { id_pedido },
+            include: [{
+                model: Usuario,
+                attributes: ['nombre']
+            }],
+            attributes: ['id_pedido', 'fecha_pedido', 'total', 'estado']
+        });
+
+        if (!pedido) {
+            throw { mensaje: 'Pedido no encontrado' };
+        }
+
+        return {
+            ...pedido.toJSON(),
+            nombre_usuario: pedido.Usuario.nombre
+        };
+    } catch (error) {
+        throw error;
+    }
+};
