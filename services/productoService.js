@@ -1,192 +1,178 @@
-import pool from "../config/db.js";
+import { Op } from 'sequelize';
+import { Producto, Categoria } from '../models/index.js';
 
-function listarProductos() {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT p.id_producto, p.nombre, p.descripcion, p.precio, p.stock, p.url_imagen, c.nombre_categoria
-            FROM Producto p
-            INNER JOIN Categoria c ON p.id_categoria = c.id_categoria
-            WHERE p.esta_activo = true
-        `;
-        pool.query(sql, (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
+export const listarProductos = async () => {
+    try {
+        const productos = await Producto.findAll({
+            where: { esta_activo: true },
+            include: [{
+                model: Categoria,
+                attributes: ['nombre_categoria']
+            }],
+            attributes: ['id_producto', 'nombre', 'descripcion', 'precio', 'stock', 'url_imagen']
+        });
+        return productos.map(p => ({
+            ...p.toJSON(),
+            nombre_categoria: p.Categoria.nombre_categoria
+        }));
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const buscarProductoPorId = async (id_producto) => {
+    try {
+        const producto = await Producto.findOne({
+            where: {
+                id_producto,
+                esta_activo: true
+            },
+            include: [{
+                model: Categoria,
+                attributes: ['nombre_categoria']
+            }],
+            attributes: ['id_producto', 'nombre', 'descripcion', 'precio', 'stock', 'url_imagen']
+        });
+
+        if (!producto) {
+            throw { mensaje: 'Producto no encontrado' };
+        }
+
+        return {
+            ...producto.toJSON(),
+            nombre_categoria: producto.Categoria.nombre_categoria
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const buscarProductosPorNombre = async (nombre) => {
+    try {
+        const productos = await Producto.findAll({
+            where: {
+                nombre: { [Op.like]: `%${nombre}%` },
+                esta_activo: true
+            },
+            include: [{
+                model: Categoria,
+                attributes: ['nombre_categoria']
+            }],
+            attributes: ['id_producto', 'nombre', 'descripcion', 'precio', 'stock', 'url_imagen']
+        });
+
+        return productos.map(p => ({
+            ...p.toJSON(),
+            nombre_categoria: p.Categoria.nombre_categoria
+        }));
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const listarProductosPorCategoria = async (nombreCategoria) => {
+    try {
+        const productos = await Producto.findAll({
+            where: { esta_activo: true },
+            include: [{
+                model: Categoria,
+                where: { nombre_categoria: { [Op.like]: `%${nombreCategoria}%` } },
+                attributes: ['nombre_categoria']
+            }],
+            attributes: ['id_producto', 'nombre', 'descripcion', 'precio', 'stock', 'url_imagen']
+        });
+
+        return productos.map(p => ({
+            ...p.toJSON(),
+            nombre_categoria: p.Categoria.nombre_categoria
+        }));
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const crearProducto = async (data) => {
+    try {
+        const nuevoProducto = await Producto.create({
+            nombre: data.nombre,
+            descripcion: data.descripcion,
+            precio: data.precio,
+            stock: data.stock,
+            url_imagen: data.url_imagen,
+            id_categoria: data.id_categoria
+        });
+
+        return {
+            mensaje: 'Producto creado exitosamente',
+            id: nuevoProducto.id_producto
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const actualizarProductoCompleto = async (id, data) => {
+    try {
+        const [numRows] = await Producto.update({
+            nombre: data.nombre,
+            descripcion: data.descripcion,
+            precio: data.precio,
+            stock: data.stock,
+            url_imagen: data.url_imagen,
+            id_categoria: data.id_categoria
+        }, {
+            where: {
+                id_producto: id,
+                esta_activo: true
             }
         });
-    });
-}
 
-function buscarProductoPorId(id_producto) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT p.id_producto, p.nombre, p.descripcion, p.precio, p.stock, p.url_imagen, c.nombre_categoria
-            FROM Producto p
-            INNER JOIN Categoria c ON p.id_categoria = c.id_categoria
-            WHERE p.id_producto = ? AND p.esta_activo = true
-        `;
-        pool.query(sql, [id_producto], (error, results) => {
-            if (error) {
-                reject(error);
-            } else if (results.length === 0) {
-                reject({ mensaje: 'Producto no encontrado' });
-            } else {
-                resolve(results[0]);
+        if (numRows === 0) {
+            throw { mensaje: 'Producto no encontrado o inactivo' };
+        }
+
+        return { mensaje: 'Producto actualizado exitosamente' };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const actualizarPrecioStockProducto = async (id, data) => {
+    try {
+        const [numRows] = await Producto.update({
+            precio: data.precio,
+            stock: data.stock
+        }, {
+            where: {
+                id_producto: id,
+                esta_activo: true
             }
         });
-    });
-}
 
-function buscarProductosPorNombre(nombre) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT p.id_producto, p.nombre, p.descripcion, p.precio, p.stock, p.url_imagen, c.nombre_categoria
-            FROM Producto p
-            INNER JOIN Categoria c ON p.id_categoria = c.id_categoria
-            WHERE p.esta_activo = true AND p.nombre LIKE ?
-        `;
-        const value = [`%${nombre}%`];
+        if (numRows === 0) {
+            throw { mensaje: 'Producto no encontrado o inactivo' };
+        }
 
-        pool.query(sql, value, (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
-            }
+        return { mensaje: 'Precio y stock actualizados exitosamente' };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const eliminarProducto = async (id) => {
+    try {
+        const [numRows] = await Producto.update({
+            esta_activo: false
+        }, {
+            where: { id_producto: id }
         });
-    });
-}
 
-function listarProductosPorCategoria(nombreCategoria) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT p.id_producto, p.nombre, p.descripcion, p.precio, p.stock, p.url_imagen, c.nombre_categoria
-            FROM Producto p
-            INNER JOIN Categoria c ON p.id_categoria = c.id_categoria
-            WHERE p.esta_activo = true AND c.nombre_categoria LIKE ?
-        `;
-        const value = [`%${nombreCategoria}%`];
+        if (numRows === 0) {
+            throw { mensaje: 'Producto no encontrado' };
+        }
 
-        pool.query(sql, value, (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
-            }
-        });
-    });
-}
-
-function crearProducto(data) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            INSERT INTO Producto (nombre, descripcion, precio, stock, url_imagen, id_categoria)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `;
-        const values = [
-            data.nombre,
-            data.descripcion,
-            data.precio,
-            data.stock,
-            data.url_imagen,
-            data.id_categoria
-        ];
-
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: 'Producto creado exitosamente', id: result.insertId });
-            }
-        });
-    });
-}
-
-function actualizarProductoCompleto(id, data) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            UPDATE Producto
-            SET nombre = ?, descripcion = ?, precio = ?, stock = ?, url_imagen = ?, id_categoria = ?
-            WHERE id_producto = ? AND esta_activo = true
-        `;
-        const values = [
-            data.nombre,
-            data.descripcion,
-            data.precio,
-            data.stock,
-            data.url_imagen,
-            data.id_categoria,
-            id
-        ];
-
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                if (result.affectedRows === 0) {
-                    reject({ mensaje: 'Producto no encontrado o inactivo' });
-                } else {
-                    resolve({ mensaje: 'Producto actualizado exitosamente' });
-                }
-            }
-        });
-    });
-}
-
-function actualizarPrecioStockProducto(id, data) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            UPDATE Producto
-            SET precio = ?, stock = ?
-            WHERE id_producto = ? AND esta_activo = true
-        `;
-        const values = [data.precio, data.stock, id];
-
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                if (result.affectedRows === 0) {
-                    reject({ mensaje: 'Producto no encontrado o inactivo' });
-                } else {
-                    resolve({ mensaje: 'Precio y stock actualizados exitosamente' });
-                }
-            }
-        });
-    });
-}
-
-function eliminarProducto(id) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            UPDATE Producto
-            SET esta_activo = false
-            WHERE id_producto = ?
-        `;
-        const values = [id];
-
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                if (result.affectedRows === 0) {
-                    reject({ mensaje: 'Producto no encontrado' });
-                } else {
-                    resolve({ mensaje: 'Producto eliminado (inactivado) exitosamente' });
-                }
-            }
-        });
-    });
-}
-
-export {
-    listarProductos,
-    buscarProductoPorId,
-    buscarProductosPorNombre,
-    listarProductosPorCategoria,
-    crearProducto,
-    actualizarProductoCompleto,
-    actualizarPrecioStockProducto,
-    eliminarProducto
+        return { mensaje: 'Producto eliminado exitosamente' };
+    } catch (error) {
+        throw error;
+    }
 };

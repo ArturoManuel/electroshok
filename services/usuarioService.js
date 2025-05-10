@@ -1,290 +1,248 @@
-import pool from "../config/db.js";
-import bcrypt from "bcrypt";
+import bcrypt from 'bcrypt';
+import { Usuario } from '../models/index.js';
+import { generateToken, generateRefreshToken } from '../config/jwt.js';
 
-function registrarUsuario(data) {
-    return new Promise((resolve, reject) => {
-        bcrypt.hash(data.contrasena, 10, (err, hashPassword) => {
-            if (err) return reject(err);
+export const registrarUsuario = async (data) => {
+    try {
+        const hashPassword = await bcrypt.hash(data.contrasena, 10);
+        const hashRespuesta = await bcrypt.hash(data.respuesta_secreta, 10);
 
-            bcrypt.hash(data.respuesta_secreta, 10, (err2, hashRespuesta) => {
-                if (err2) return reject(err2);
-
-                const sql = `
-                    INSERT INTO Usuario (nombre, correo_electronico, contrasena, rol, pregunta_secreta, respuesta_secreta)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `;
-                const values = [
-                    data.nombre,
-                    data.correo_electronico,
-                    hashPassword,
-                    data.rol || 'cliente',
-                    data.pregunta_secreta,
-                    hashRespuesta
-                ];
-
-                pool.query(sql, values, (error, result) => {
-                    if (error) {
-                        reject(error);
-                    } else {
-                        resolve({ mensaje: 'Usuario registrado exitosamente', id: result.insertId });
-                    }
-                });
-            });
+        const nuevoUsuario = await Usuario.create({
+            nombre: data.nombre,
+            correo_electronico: data.correo_electronico,
+            contrasena: hashPassword,
+            rol: data.rol || 'cliente',
+            pregunta_secreta: data.pregunta_secreta,
+            respuesta_secreta: hashRespuesta
         });
-    });
-}
 
-function loginUsuario(data) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT * FROM Usuario
-            WHERE correo_electronico = ?
-        `;
-        pool.query(sql, [data.correo_electronico], (error, results) => {
-            if (error) return reject(error);
+        return {
+            mensaje: 'Usuario registrado exitosamente',
+            id: nuevoUsuario.id_usuario
+        };
+    } catch (error) {
+        throw error;
+    }
+};
 
-            if (results.length === 0) {
-                return reject({ mensaje: 'Usuario no encontrado' });
-            }
-
-            const usuario = results[0];
-
-            if (!usuario.esta_activo) {
-                return reject({ mensaje: 'Cuenta bloqueada. Contacte soporte o recupere su cuenta.' });
-            }
-
-            bcrypt.compare(data.contrasena, usuario.contrasena, (err, esCorrecta) => {
-                if (err) return reject(err);
-
-                if (esCorrecta) {
-
-                    const resetIntentosSql = `
-                        UPDATE Usuario SET intentos_login = 0 WHERE id_usuario = ?
-                    `;
-                    pool.query(resetIntentosSql, [usuario.id_usuario], () => {
-                        resolve({ mensaje: 'Login exitoso', usuario: usuario });
-                    });
-                } else {
-
-                    const aumentarIntentosSql = `
-                        UPDATE Usuario SET intentos_login = intentos_login + 1 WHERE id_usuario = ?
-                    `;
-                    pool.query(aumentarIntentosSql, [usuario.id_usuario], (error2) => {
-                        if (error2) return reject(error2);
-
-
-                        const verificarIntentosSql = `
-                            SELECT intentos_login FROM Usuario WHERE id_usuario = ?
-                        `;
-                        pool.query(verificarIntentosSql, [usuario.id_usuario], (error3, intentos) => {
-                            if (error3) return reject(error3);
-
-                            if (intentos[0].intentos_login >= 3) {
-                                bloquearUsuario(usuario.id_usuario)
-                                    .then(() => reject({ mensaje: 'Cuenta bloqueada por intentos fallidos.' }))
-                                    .catch((e) => reject(e));
-                            } else {
-                                reject({ mensaje: 'Contraseña incorrecta' });
-                            }
-                        });
-                    });
-                }
-            });
+export const loginUsuario = async (data) => {
+    try {
+        const usuario = await Usuario.findOne({
+            where: { correo_electronico: data.correo_electronico }
         });
-    });
-}
 
-function bloquearUsuario(id) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            UPDATE Usuario
-            SET esta_activo = false
-            WHERE id_usuario = ?
-        `;
-        pool.query(sql, [id], (error) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: 'Usuario bloqueado correctamente' });
+        if (!usuario) {
+            throw { mensaje: 'Usuario no encontrado' };
+        }
+
+        if (!usuario.esta_activo) {
+            throw { mensaje: 'Usuario bloqueado' };
+        }
+
+        const coincide = await bcrypt.compare(data.contrasena, usuario.contrasena);
+
+        if (!coincide) {
+            const nuevoIntentos = usuario.intentos_login + 1;
+            await usuario.update({ intentos_login: nuevoIntentos });
+
+            if (nuevoIntentos >= 3) {
+                await usuario.update({ esta_activo: false });
+                throw { mensaje: 'Usuario bloqueado por múltiples intentos fallidos' };
             }
+
+            throw { mensaje: 'Contraseña incorrecta' };
+        }
+
+        await usuario.update({ intentos_login: 0 });
+
+        const usuarioData = usuario.toJSON();
+        delete usuarioData.contrasena;
+        delete usuarioData.respuesta_secreta;
+
+        // Generar tokens
+        const token = generateToken({
+            id_persona: usuarioData.id_usuario,
+            email: usuarioData.correo_electronico,
+            rol: usuarioData.rol
         });
-    });
-}
 
-function validarPreguntaSecreta(data) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT * FROM Usuario
-            WHERE correo_electronico = ?
-        `;
-        pool.query(sql, [data.correo_electronico], (error, results) => {
-            if (error) return reject(error);
-
-            if (results.length === 0) {
-                return reject({ mensaje: 'Usuario no encontrado' });
-            }
-
-            const usuario = results[0];
-
-            bcrypt.compare(data.respuesta_secreta, usuario.respuesta_secreta, (err, esCorrecta) => {
-                if (err) return reject(err);
-
-                if (esCorrecta) {
-                    resolve(usuario);
-                } else {
-                    reject({ mensaje: 'Respuesta secreta incorrecta' });
-                }
-            });
+        const refreshToken = generateRefreshToken({
+            id_persona: usuarioData.id_usuario
         });
-    });
-}
 
-function generarOtp(id_usuario) {
-    return new Promise((resolve, reject) => {
-        const otp = Math.floor(100000 + Math.random() * 900000); // OTP de 6 dígitos
-        const ahora = new Date();
-        const cincoMinutosDespues = new Date(ahora.getTime() + 5 * 60000); // 5 minutos
-
-        const sql = `
-            UPDATE Usuario
-            SET otp = ?, otp_expira = ?, esta_activo = true
-            WHERE id_usuario = ?
-        `;
-        const values = [otp, cincoMinutosDespues, id_usuario];
-
-        pool.query(sql, values, (error) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: 'OTP generado exitosamente', otp: otp });
+        return {
+            token,
+            refreshToken,
+            user: {
+                id_persona: usuarioData.id_usuario,
+                email: usuarioData.correo_electronico,
+                rol: usuarioData.rol
             }
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const bloquearUsuario = async (id) => {
+    try {
+        const [numRows] = await Usuario.update(
+            { esta_activo: false },
+            { where: { id_usuario: id } }
+        );
+
+        if (numRows === 0) {
+            throw { mensaje: 'Usuario no encontrado' };
+        }
+
+        return { mensaje: 'Usuario bloqueado exitosamente' };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const validarPreguntaSecreta = async (data) => {
+    try {
+        const usuario = await Usuario.findOne({
+            where: { correo_electronico: data.correo_electronico }
         });
-    });
-}
 
-function loginConOtp(data) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT * FROM Usuario
-            WHERE correo_electronico = ? AND esta_activo = true
-        `;
-        pool.query(sql, [data.correo_electronico], (error, results) => {
-            if (error) return reject(error);
+        if (!usuario) {
+            throw { mensaje: 'Usuario no encontrado' };
+        }
 
-            if (results.length === 0) {
-                return reject({ mensaje: 'Usuario no encontrado o inactivo' });
-            }
+        if (usuario.pregunta_secreta !== data.pregunta_secreta) {
+            throw { mensaje: 'Pregunta secreta incorrecta' };
+        }
 
-            const usuario = results[0];
+        const coincide = await bcrypt.compare(data.respuesta_secreta, usuario.respuesta_secreta);
 
-            const ahora = new Date();
-            const expira = new Date(usuario.otp_expira);
+        if (!coincide) {
+            throw { mensaje: 'Respuesta secreta incorrecta' };
+        }
 
-            if (usuario.otp !== data.otp) {
-                return reject({ mensaje: 'OTP incorrecto' });
-            }
-            if (ahora > expira) {
-                return reject({ mensaje: 'OTP expirado' });
-            }
+        return {
+            mensaje: 'Validación exitosa',
+            id_usuario: usuario.id_usuario
+        };
+    } catch (error) {
+        throw error;
+    }
+};
 
-            resolve({ mensaje: 'Login OTP exitoso', usuario: usuario });
+export const generarOtp = async (id_usuario) => {
+    try {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp_expira = new Date(Date.now() + 5 * 60000); // 5 minutos
+
+        await Usuario.update(
+            { otp, otp_expira },
+            { where: { id_usuario } }
+        );
+
+        return {
+            mensaje: 'OTP generado exitosamente',
+            otp: otp
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const loginConOtp = async (data) => {
+    try {
+        const usuario = await Usuario.findOne({
+            where: { correo_electronico: data.correo_electronico }
         });
-    });
-}
 
-function cambiarContrasena(id_usuario, correo_electronico, otpIngresado, nuevaContrasena) {
-    return new Promise((resolve, reject) => {
+        if (!usuario) {
+            throw { mensaje: 'Usuario no encontrado' };
+        }
 
-        const sqlVerificacion = `
-            SELECT otp, otp_expira FROM Usuario
-            WHERE id_usuario = ? AND correo_electronico = ? AND esta_activo = true
-        `;
-        const valuesVerificacion = [id_usuario, correo_electronico];
+        if (usuario.otp !== data.otp) {
+            throw { mensaje: 'OTP inválido' };
+        }
 
-        pool.query(sqlVerificacion, valuesVerificacion, (error, results) => {
-            if (error) return reject(error);
+        if (new Date() > new Date(usuario.otp_expira)) {
+            throw { mensaje: 'OTP expirado' };
+        }
 
-            if (results.length === 0) {
-                return reject({ mensaje: 'Usuario no encontrado o inactivo' });
-            }
-
-            const usuario = results[0];
-            const ahora = new Date();
-            const expira = new Date(usuario.otp_expira);
-
-            if (usuario.otp !== otpIngresado) {
-                return reject({ mensaje: 'OTP incorrecto' });
-            }
-            if (ahora > expira) {
-                return reject({ mensaje: 'OTP expirado' });
-            }
-
-            bcrypt.hash(nuevaContrasena, 10, (err, hashPassword) => {
-                if (err) return reject(err);
-
-                const sql = `
-                    UPDATE Usuario
-                    SET contrasena = ?, otp = NULL, otp_expira = NULL
-                    WHERE id_usuario = ?
-                `;
-                const values = [hashPassword, id_usuario];
-
-                pool.query(sql, values, (error) => {
-                    if (error) {
-                        reject(error);
-                    } else {
-                        resolve({ mensaje: 'Contraseña cambiada exitosamente' });
-                    }
-                });
-            });
+        await usuario.update({
+            otp: null,
+            otp_expira: null
         });
-    });
-}
 
-function listarUsuarios() {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT id_usuario, nombre, correo_electronico, rol, fecha_creacion, esta_activo
-            FROM Usuario
-            ORDER BY fecha_creacion DESC
-        `;
-        pool.query(sql, (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
+        const usuarioData = usuario.toJSON();
+        delete usuarioData.contrasena;
+        delete usuarioData.respuesta_secreta;
+        delete usuarioData.otp;
+        delete usuarioData.otp_expira;
+
+        return usuarioData;
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const cambiarContrasena = async (id_usuario, correo_electronico, otpIngresado, nuevaContrasena) => {
+    try {
+        const usuario = await Usuario.findOne({
+            where: {
+                id_usuario,
+                correo_electronico
             }
         });
-    });
-}
 
-function buscarUsuarioPorId(id_usuario) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT id_usuario, nombre, correo_electronico, rol, fecha_creacion, esta_activo
-            FROM Usuario
-            WHERE id_usuario = ?
-        `;
-        pool.query(sql, [id_usuario], (error, results) => {
-            if (error) {
-                reject(error);
-            } else if (results.length === 0) {
-                reject({ mensaje: "Usuario no encontrado" });
-            } else {
-                resolve(results[0]);
-            }
+        if (!usuario) {
+            throw { mensaje: 'Usuario no encontrado' };
+        }
+
+        if (usuario.otp !== otpIngresado) {
+            throw { mensaje: 'OTP inválido' };
+        }
+
+        if (new Date() > new Date(usuario.otp_expira)) {
+            throw { mensaje: 'OTP expirado' };
+        }
+
+        const hashPassword = await bcrypt.hash(nuevaContrasena, 10);
+
+        await usuario.update({
+            contrasena: hashPassword,
+            otp: null,
+            otp_expira: null
         });
-    });
-}
 
-export {
-    registrarUsuario,
-    loginUsuario,
-    bloquearUsuario,
-    validarPreguntaSecreta,
-    generarOtp,
-    loginConOtp,
-    cambiarContrasena,
-    listarUsuarios,
-    buscarUsuarioPorId
+        return { mensaje: 'Contraseña actualizada exitosamente' };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const listarUsuarios = async () => {
+    try {
+        const usuarios = await Usuario.findAll({
+            attributes: ['id_usuario', 'nombre', 'correo_electronico', 'rol', 'esta_activo']
+        });
+        return usuarios;
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const buscarUsuarioPorId = async (id_usuario) => {
+    try {
+        const usuario = await Usuario.findOne({
+            where: { id_usuario },
+            attributes: ['id_usuario', 'nombre', 'correo_electronico', 'rol', 'esta_activo']
+        });
+
+        if (!usuario) {
+            throw { mensaje: 'Usuario no encontrado' };
+        }
+
+        return usuario;
+    } catch (error) {
+        throw error;
+    }
 };

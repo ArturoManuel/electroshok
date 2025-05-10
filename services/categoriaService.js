@@ -1,69 +1,69 @@
-import pool from "../config/db.js";
+import { Categoria } from '../models/index.js';
 
-function listarCategorias() {
-    return new Promise((resolve, reject) => {
-        const sql = 'SELECT id_categoria, nombre_categoria, tipo_categoria, fecha_creacion FROM Categoria WHERE esta_activa = true';
-        pool.query(sql, (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
+export const listarCategorias = async () => {
+    try {
+        const categorias = await Categoria.findAll({
+            where: { esta_activa: true },
+            attributes: ['id_categoria', 'nombre_categoria', 'tipo_categoria', 'fecha_creacion']
+        });
+        return categorias;
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const crearCategoria = async (data) => {
+    try {
+        const nuevaCategoria = await Categoria.create({
+            nombre_categoria: data.nombre_categoria,
+            tipo_categoria: data.tipo_categoria
+        });
+
+        return {
+            mensaje: 'Categoría creada exitosamente',
+            id: nuevaCategoria.id_categoria
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const actualizarCategoria = async (id, data) => {
+    try {
+        const [numRows] = await Categoria.update({
+            nombre_categoria: data.nombre_categoria,
+            tipo_categoria: data.tipo_categoria
+        }, {
+            where: {
+                id_categoria: id,
+                esta_activa: true
             }
         });
-    });
-}
 
-function crearCategoria(data) {
-    return new Promise((resolve, reject) => {
-        const sql = 'INSERT INTO Categoria (nombre_categoria, tipo_categoria) VALUES (?, ?)';
-        const values = [data.nombre_categoria, data.tipo_categoria];
+        if (numRows === 0) {
+            throw { mensaje: 'Categoría no encontrada o inactiva' };
+        }
 
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: 'Categoría creada exitosamente', id: result.insertId });
-            }
+        return { mensaje: 'Categoría actualizada exitosamente' };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const eliminarCategoria = async (id) => {
+    try {
+        const [numRows] = await Categoria.update({
+            esta_activa: false
+        }, {
+            where: { id_categoria: id }
         });
-    });
-}
 
-function actualizarCategoria(id, data) {
-    return new Promise((resolve, reject) => {
-        const sql = 'UPDATE Categoria SET nombre_categoria = ?, tipo_categoria = ? WHERE id_categoria = ? AND esta_activa = true';
-        const values = [data.nombre_categoria, data.tipo_categoria, id];
+        if (numRows === 0) {
+            throw { mensaje: 'Categoría no encontrada' };
+        }
 
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                if (result.affectedRows === 0) {
-                    reject({ mensaje: 'Categoría no encontrada o inactiva' });
-                } else {
-                    resolve({ mensaje: 'Categoría actualizada exitosamente' });
-                }
-            }
-        });
-    });
-}
-
-function eliminarCategoria(id) {
-    return new Promise((resolve, reject) => {
-        const sql = 'UPDATE Categoria SET esta_activa = false WHERE id_categoria = ?';
-        const values = [id];
-
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                if (result.affectedRows === 0) {
-                    reject({ mensaje: 'Categoría no encontrada' });
-                } else {
-                    resolve({ mensaje: 'Categoría eliminada (inactivada) exitosamente' });
-                }
-            }
-        });
-    });
-}
-
-export { listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria };
+        return { mensaje: 'Categoría eliminada exitosamente' };
+    } catch (error) {
+        throw error;
+    }
+};

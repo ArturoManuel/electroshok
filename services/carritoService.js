@@ -1,96 +1,78 @@
-import pool from "../config/db.js";
+import { CarritoItem, Producto } from '../models/index.js';
 
-function agregarAlCarrito(data) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            INSERT INTO CarritoItem (id_usuario, id_producto, cantidad)
-            VALUES (?, ?, ?)
-        `;
-        const values = [data.id_usuario, data.id_producto, data.cantidad];
-
-        pool.query(sql, values, (error, result) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: "Producto agregado al carrito exitosamente", id_item: result.insertId });
-            }
+export const agregarAlCarrito = async (data) => {
+    try {
+        const nuevoItem = await CarritoItem.create({
+            id_usuario: data.id_usuario,
+            id_producto: data.id_producto,
+            cantidad: data.cantidad
         });
-    });
-}
 
-function listarCarrito(id_usuario) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            SELECT ci.id_item, p.nombre, p.precio, ci.cantidad, (p.precio * ci.cantidad) AS subtotal
-            FROM CarritoItem ci
-            INNER JOIN Producto p ON ci.id_producto = p.id_producto
-            WHERE ci.id_usuario = ?
-        `;
-        pool.query(sql, [id_usuario], (error, results) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(results);
-            }
+        return {
+            mensaje: "Producto agregado al carrito exitosamente",
+            id_item: nuevoItem.id_item
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const listarCarrito = async (id_usuario) => {
+    try {
+        const items = await CarritoItem.findAll({
+            where: { id_usuario },
+            include: [{
+                model: Producto,
+                attributes: ['nombre', 'precio']
+            }],
+            attributes: ['id_item', 'cantidad']
         });
-    });
-}
 
-function actualizarCantidadCarrito(id_item, nuevaCantidad) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            UPDATE CarritoItem
-            SET cantidad = ?
-            WHERE id_item = ?
-        `;
-        const values = [nuevaCantidad, id_item];
+        return items.map(item => ({
+            id_item: item.id_item,
+            nombre: item.Producto.nombre,
+            precio: item.Producto.precio,
+            cantidad: item.cantidad,
+            subtotal: item.Producto.precio * item.cantidad
+        }));
+    } catch (error) {
+        throw error;
+    }
+};
 
-        pool.query(sql, values, (error) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: "Cantidad actualizada exitosamente" });
-            }
+export const actualizarCantidadCarrito = async (id_item, nuevaCantidad) => {
+    try {
+        await CarritoItem.update(
+            { cantidad: nuevaCantidad },
+            { where: { id_item } }
+        );
+
+        return { mensaje: "Cantidad actualizada exitosamente" };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const eliminarItemCarrito = async (id_item) => {
+    try {
+        await CarritoItem.destroy({
+            where: { id_item }
         });
-    });
-}
 
-function eliminarItemCarrito(id_item) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            DELETE FROM CarritoItem
-            WHERE id_item = ?
-        `;
-        pool.query(sql, [id_item], (error) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: "Producto eliminado del carrito" });
-            }
+        return { mensaje: "Producto eliminado del carrito" };
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const cancelarCarritoUsuario = async (id_usuario) => {
+    try {
+        await CarritoItem.destroy({
+            where: { id_usuario }
         });
-    });
-}
 
-function cancelarCarritoUsuario(id_usuario) {
-    return new Promise((resolve, reject) => {
-        const sql = `
-            DELETE FROM CarritoItem
-            WHERE id_usuario = ?
-        `;
-        pool.query(sql, [id_usuario], (error) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve({ mensaje: "Carrito cancelado exitosamente" });
-            }
-        });
-    });
-}
-
-export {
-    agregarAlCarrito,
-    listarCarrito,
-    actualizarCantidadCarrito,
-    eliminarItemCarrito,
-    cancelarCarritoUsuario
+        return { mensaje: "Carrito cancelado exitosamente" };
+    } catch (error) {
+        throw error;
+    }
 };
